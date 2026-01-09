@@ -1,0 +1,158 @@
+Part 1: Code Review & Debugging:-
+
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    data = request.json
+    #No validation:
+    #request.json could be None
+    #Missing required fields will cause KeyError
+    #No type checking (price, quantity)
+
+    # Create new product
+    product = Product(
+        name=data['name'],  
+        #Assumes 'name' is always present
+
+        sku=data['sku'],  
+        # SKU uniqueness is not enforced here
+        # Duplicate SKUs will be allowed unless DB constraint exists
+
+        price=data['price'],  
+        # Price likely stored as float → precision issues
+        # No validation for negative or invalid values
+
+        warehouse_id=data['warehouse_id']
+        # Product is incorrectly tied to a single warehouse
+        # Business rule: products can exist in multiple warehouses
+    )
+
+    db.session.add(product)
+    db.session.commit()
+    # First commit happens here
+    # If anything fails later, product will still exist (partial write)
+
+    # Update inventory count
+    inventory = Inventory(
+        product_id=product.id,
+        #Depends on previous commit succeeding
+
+        warehouse_id=data['warehouse_id'],
+
+        quantity=data['initial_quantity']
+        #Assumes initial_quantity is always provided
+        #No validation for negative quantity
+    )
+
+    db.session.add(inventory)
+    db.session.commit()
+    #Second commit → no transaction safety
+    #Inventory failure leaves orphan product
+
+    return {
+        "message": "Product created",
+        "product_id": product.id
+    }
+    #Always returns success
+    #No error handling, no rollback, no status codes
+
+
+
+
+1. Issues Identified (Technical + Business Logic)
+A. No input validation
+
+Missing required fields will raise runtime KeyError
+
+No type validation (price, quantity)
+
+B. SKU uniqueness not enforced
+
+Business rule says SKUs must be unique across the platform
+
+This code allows duplicates
+
+C. Incorrect data model assumption
+
+Product is tied to a single warehouse
+
+Requirement: products can exist in multiple warehouses
+
+D. No transaction handling
+
+Two separate commits
+
+If inventory insert fails → product exists without inventory
+
+E. Price precision risk
+
+Price likely stored as float
+
+Floats cause rounding errors in financial systems
+
+F. No error handling or rollback
+
+Any DB failure leads to partial writes
+
+G. Optional fields not handled
+
+initial_quantity might be optional but assumed mandatory
+
+
+Issue                                Real-World Impact                   
+
+Duplicate SKUs                       Inventory confusion, billing errors 
+Partial commits                      Corrupt database state              
+Float prices                         Financial discrepancies             
+Single-warehouse assumption          Broken core feature                 
+No validation                        API crashes, poor UX                
+
+
+
+
+Fixed Code :-
+
+from decimal import Decimal
+from sqlalchemy.exc import IntegrityError
+
+@app.route('/api/products', methods=['POST'])
+def create_product():
+    data = request.json
+
+    # Validate required input fields
+    required_fields = ['name', 'sku', 'price', 'warehouse_id']
+    for field in required_fields:
+        if field not in data:
+            return {"error": f"{field} is required"}, 400
+
+    try:
+        # Begin atomic transaction to ensure data consistency
+        with db.session.begin():
+
+            # Create product independently of warehouse assignment
+            product = Product(
+                name=data['name'],
+                sku=data['sku'],
+                price=Decimal(str(data['price']))
+            )
+            db.session.add(product)
+
+            # Flush to obtain product ID without committing the transaction
+            db.session.flush()
+
+            # Initialize inventory for the specified warehouse
+            inventory = Inventory(
+                product_id=product.id,
+                warehouse_id=data['warehouse_id'],
+                quantity=data.get('initial_quantity', 0)
+            )
+            db.session.add(inventory)
+
+        return {
+            "message": "Product created successfully",
+            "product_id": product.id
+        }, 201
+
+    except IntegrityError:
+        # Handle duplicate SKU or other constraint violations
+        db.session.rollback()
+        return {"error": "SKU already exists"}, 409

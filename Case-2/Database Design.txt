@@ -1,0 +1,86 @@
+Core Tables (Simplified SQL DDL)
+
+
+
+Company (
+    id BIGINT PK,
+    name VARCHAR,
+    created_at TIMESTAMP
+)
+
+Warehouse (
+    id BIGINT PK,
+    company_id FK → Company(id),
+    name VARCHAR,
+    location VARCHAR
+)
+
+Product (
+    id BIGINT PK,
+    company_id FK → Company(id),
+    sku VARCHAR UNIQUE,
+    name VARCHAR,
+    price DECIMAL(10,2),
+    product_type VARCHAR
+)
+
+Inventory (
+    product_id FK → Product(id),
+    warehouse_id FK → Warehouse(id),
+    quantity INT,
+    PRIMARY KEY (product_id, warehouse_id)
+)
+
+InventoryHistory (
+    id BIGINT PK,
+    product_id,
+    warehouse_id,
+    delta INT,
+    reason VARCHAR,
+    created_at TIMESTAMP
+)
+
+Supplier (
+    id BIGINT PK,
+    name VARCHAR,
+    contact_email VARCHAR
+)
+
+ProductSupplier (
+    product_id FK,
+    supplier_id FK
+)
+
+ProductBundle (
+    parent_product_id FK,
+    child_product_id FK,
+    quantity INT
+)
+
+
+Design Goals
+
+- Multiple companies and warehouses
+- Products stored in multiple warehouses
+- Inventory tracking over time
+- Supplier relationships
+- Product bundles
+- Scalability and data integrity
+
+Design Justifications
+
+- Inventory as a join table → supports multi-warehouse storage
+- InventoryHistory → enables audit + analytics
+- Bundle table → recursive product composition
+- Composite primary key → prevents duplicate inventory rows
+
+
+
+Missing Requirements (Questions to Ask Product Team)
+
+- Can suppliers be shared across companies?
+- Are bundle prices fixed or derived?
+- What defines “recent sales activity”?
+- Can warehouses transfer inventory?
+- Are backorders allowed?
+
